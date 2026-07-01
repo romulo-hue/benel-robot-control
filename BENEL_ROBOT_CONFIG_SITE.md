@@ -83,6 +83,23 @@ Como iniciar pelo VS Code:
 3. Digite `Tasks: Run Task`
 4. Escolha `Benel: Rodar robo pelo JSON`
 
+Ou, se quiser escolher o arquivo em uma janela:
+
+1. Abra a pasta `C:\Users\benel.FRZNBIGOR\Documents\Codex\2026-05-27` no VS Code
+2. Pressione `Ctrl+Shift+P`
+3. Digite `Tasks: Run Task`
+4. Escolha `Benel: Selecionar JSON e rodar em Python`
+
+Esse atalho usa:
+
+- `C:\Users\benel.FRZNBIGOR\Documents\Codex\2026-05-27\benel_robot_json_launcher.py`
+
+O launcher em Python:
+
+- abre uma janela para escolher o arquivo `.json`
+- pede usuario e senha se as variaveis de ambiente nao estiverem preenchidas
+- chama automaticamente o executor PowerShell do robo
+
 Esse atalho usa:
 
 - `C:\Users\benel.FRZNBIGOR\Documents\Codex\2026-05-27\run_benel_robot_from_vscode.ps1`

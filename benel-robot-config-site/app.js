@@ -11,6 +11,8 @@ const WEEKDAYS = [
   { value: "sun", label: "Dom" },
 ];
 const HOSTED_MODE = window.location.protocol.startsWith("http");
+const IS_GITHUB_PAGES = window.location.hostname.endsWith("github.io");
+const SUPPORTS_SERVER_API = HOSTED_MODE && !IS_GITHUB_PAGES;
 const SERVER_CONFIG_ENDPOINT = "/api/config";
 const SERVER_RUN_NOW_ENDPOINT = "/api/run-now";
 const SERVER_HEALTH_ENDPOINT = "/api/health";
@@ -162,7 +164,17 @@ function refreshModeBadge(isHostedReady = false) {
     return;
   }
 
-  elements.modeValue.textContent = isHostedReady ? "Render / Nuvem" : (HOSTED_MODE ? "Web" : "Offline");
+  if (isHostedReady) {
+    elements.modeValue.textContent = "Render / Nuvem";
+    return;
+  }
+
+  if (IS_GITHUB_PAGES) {
+    elements.modeValue.textContent = "GitHub Pages";
+    return;
+  }
+
+  elements.modeValue.textContent = HOSTED_MODE ? "Web" : "Offline";
 }
 
 function psQuote(value) {
@@ -565,6 +577,13 @@ async function loadServerConfig() {
     return;
   }
 
+  if (!SUPPORTS_SERVER_API) {
+    refreshModeBadge(false);
+    setStatusMessage("GitHub Pages ativo: configuracao salva no navegador e exportada em JSON.");
+    render();
+    return;
+  }
+
   try {
     const [configResponse, healthResponse] = await Promise.all([
       fetch(SERVER_CONFIG_ENDPOINT, { method: "GET" }),
@@ -659,6 +678,11 @@ async function saveConfig() {
     return;
   }
 
+  if (!SUPPORTS_SERVER_API) {
+    window.alert("No GitHub Pages a configuracao fica salva no navegador. Use Baixar JSON para levar a configuracao para outra maquina.");
+    return;
+  }
+
   try {
     const response = await fetch(SERVER_CONFIG_ENDPOINT, {
       method: "POST",
@@ -684,6 +708,11 @@ async function saveConfig() {
 async function runNow() {
   if (!HOSTED_MODE) {
     window.alert("A execucao imediata pelo site hospedado so funciona quando o painel estiver rodando no servidor.");
+    return;
+  }
+
+  if (!SUPPORTS_SERVER_API) {
+    window.alert("No GitHub Pages o painel serve para montar e baixar o JSON. A execucao do robo continua sendo local na sua maquina.");
     return;
   }
 
