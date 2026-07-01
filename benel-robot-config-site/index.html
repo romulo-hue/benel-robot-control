@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Benel Robot Control</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Benel PPBI</p>
+          <h1>Central do Robo Guberman</h1>
+          <p class="lead">
+            Configure horarios, filtros, ciclos e a sequencia de execucao do robo do
+            relatorio 28 antes de levar isso para um agendamento real.
+          </p>
+        </div>
+        <div class="hero-status">
+          <div class="status-card">
+            <span class="status-label">Modo</span>
+            <strong id="modeValue">Offline</strong>
+          </div>
+          <div class="status-card">
+            <span class="status-label">Relatorio alvo</span>
+            <strong>REL2026 GUBERMAN v.00</strong>
+          </div>
+          <div class="status-card">
+            <span class="status-label">Pagina</span>
+            <strong>28 - MANUT. PREV.</strong>
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="main-column">
+          <section class="panel summary-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-tag">Resumo</p>
+                <h2>Painel de controle</h2>
+              </div>
+              <div class="button-row">
+                <button id="saveConfigButton" class="btn btn-primary" type="button">Salvar configuracao</button>
+                <button id="runNowButton" class="btn btn-accent" type="button">Rodar agora</button>
+                <button id="resetConfigButton" class="btn btn-muted" type="button">Restaurar padrao</button>
+              </div>
+            </div>
+
+            <div class="summary-grid">
+              <article class="metric-card">
+                <span class="metric-label">Ciclos ativos</span>
+                <strong id="activeCyclesMetric" class="metric-value">0</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Execucoes totais</span>
+                <strong id="totalRunsMetric" class="metric-value">0</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Intervalo entre passos</span>
+                <strong id="waitMetric" class="metric-value">0s</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Agenda</span>
+                <strong id="scheduleMetric" class="metric-value">Manual</strong>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-tag">Agenda</p>
+                <h2>Quando o robo deve rodar</h2>
+              </div>
+            </div>
+
+            <div class="form-grid schedule-grid">
+              <label class="field">
+                <span>Ativar agendamento</span>
+                <select id="scheduleEnabled">
+                  <option value="true">Sim</option>
+                  <option value="false">Nao</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Modo de execucao</span>
+                <select id="scheduleMode">
+                  <option value="manual">Manual</option>
+                  <option value="daily">Diario</option>
+                  <option value="weekly">Semanal</option>
+                  <option value="interval">Intervalado</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Horario inicial</span>
+                <input id="startTime" type="time" />
+              </label>
+              <label class="field">
+                <span>Horario final</span>
+                <input id="endTime" type="time" />
+              </label>
+              <label class="field">
+                <span>Intervalo em minutos</span>
+                <input id="intervalMinutes" type="number" min="5" step="5" />
+              </label>
+              <label class="field">
+                <span>Espera entre passos do robo</span>
+                <input id="actionWaitSeconds" type="number" min="0" step="5" />
+              </label>
+            </div>
+
+            <div class="weekdays-block">
+              <span class="field-label">Dias da semana</span>
+              <div id="weekdayButtons" class="weekday-row"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-tag">Telegram</p>
+                <h2>Integracao do bot</h2>
+              </div>
+            </div>
+
+            <div class="form-grid telegram-grid">
+              <label class="field">
+                <span>Token global do bot</span>
+                <input id="telegramBotToken" type="text" placeholder="123456789:AA..." />
+              </label>
+            </div>
+
+            <p class="helper-text">
+              O token fica salvo na configuracao exportada. Cada ciclo pode escolher se envia o print e para qual grupo/chat.
+            </p>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-tag">Ciclos</p>
+                <h2>Quais ciclos o robo vai fazer</h2>
+              </div>
+              <div class="button-row">
+                <button id="addCycleButton" class="btn btn-primary" type="button">Adicionar ciclo</button>
+              </div>
+            </div>
+
+            <p class="helper-text">
+              As sugestoes abaixo sao alimentadas pelo mapeamento mais recente dos filtros visiveis do relatorio 28. Quando o BI nao expor uma lista fechada, o campo continua livre para digitacao.
+            </p>
+
+            <div id="cyclesList" class="cycles-list"></div>
+          </section>
+        </section>
+
+        <aside class="side-column">
+          <section class="panel sticky-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-tag">Saida</p>
+                <h2>Preview da execucao</h2>
+              </div>
+            </div>
+
+            <div id="scheduleSummary" class="preview-card"></div>
+            <p id="serverStatus" class="helper-text status-inline">Modo local: configuracao salva no navegador.</p>
+
+            <div class="preview-actions">
+              <button id="copyCommandsButton" class="btn btn-primary" type="button">Copiar comandos</button>
+              <button id="exportJsonButton" class="btn btn-muted" type="button">Baixar JSON</button>
+              <label class="btn btn-muted file-label">
+                Importar JSON
+                <input id="importJsonInput" type="file" accept="application/json" hidden />
+              </label>
+            </div>
+
+            <pre id="commandPreview" class="command-preview"></pre>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <template id="cycleTemplate">
+      <article class="cycle-card">
+        <div class="cycle-header">
+          <div>
+            <p class="cycle-kicker">Ciclo</p>
+            <h3 class="cycle-title"></h3>
+          </div>
+          <div class="button-row compact">
+            <button class="btn btn-ghost move-up" type="button">Subir</button>
+            <button class="btn btn-ghost move-down" type="button">Descer</button>
+            <button class="btn btn-ghost duplicate" type="button">Duplicar</button>
+            <button class="btn btn-danger remove" type="button">Excluir</button>
+          </div>
+        </div>
+
+        <div class="form-grid cycle-grid">
+          <label class="field">
+            <span>Ativo</span>
+            <select data-field="enabled">
+              <option value="true">Sim</option>
+              <option value="false">Nao</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Nome do ciclo</span>
+            <input data-field="name" type="text" />
+          </label>
+          <label class="field">
+            <span>Pagina</span>
+            <input data-field="page" type="number" min="1" step="1" />
+          </label>
+          <label class="field">
+            <span>Repeticoes desse ciclo</span>
+            <input data-field="repetitions" type="number" min="1" step="1" />
+          </label>
+          <label class="field">
+            <span>Filial</span>
+            <input data-field="filial" type="text" list="filialSuggestions" />
+          </label>
+          <label class="field">
+            <span>Situacao</span>
+            <input data-field="situacao" type="text" list="situacaoSuggestions" />
+          </label>
+          <label class="field">
+            <span>Tipo/Categoria</span>
+            <input data-field="tipoCategoria" type="text" list="tipoCategoriaSuggestions" />
+          </label>
+          <label class="field">
+            <span>Zona</span>
+            <input data-field="zona" type="text" list="zonaSuggestions" />
+          </label>
+          <label class="field">
+            <span>Centro de custo</span>
+            <input data-field="centroCusto" type="text" list="centroCustoSuggestions" />
+          </label>
+          <label class="field">
+            <span>Frota</span>
+            <input data-field="frota" type="text" list="frotaSuggestions" />
+          </label>
+          <label class="field">
+            <span>Placa</span>
+            <input data-field="placa" type="text" list="placaSuggestions" />
+          </label>
+          <label class="field">
+            <span>KM (campo 1)</span>
+            <input data-field="km" type="text" list="kmSuggestions" />
+          </label>
+          <label class="field">
+            <span>KM (campo 2)</span>
+            <input data-field="km2" type="text" list="km2Suggestions" />
+          </label>
+          <label class="field">
+            <span>Manutencao</span>
+            <input data-field="manutencao" type="text" list="manutencaoSuggestions" />
+          </label>
+          <label class="field">
+            <span>No OS</span>
+            <input data-field="os" type="text" list="osSuggestions" />
+          </label>
+          <label class="field">
+            <span>Vence dia</span>
+            <input data-field="venceDia" type="date" />
+          </label>
+          <label class="field">
+            <span>Enviar print no Telegram</span>
+            <select data-field="telegramEnabled">
+              <option value="true">Sim</option>
+              <option value="false">Nao</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Grupo / Chat ID do Telegram</span>
+            <input data-field="telegramChatId" type="text" placeholder="-1001234567890 ou @seugrupo" />
+          </label>
+          <label class="field telegram-field">
+            <span>Mensagem do Telegram</span>
+            <textarea data-field="telegramMessage" rows="3" placeholder="Ex.: Ciclo finalizado"></textarea>
+          </label>
+          <label class="field notes-field">
+            <span>Observacoes</span>
+            <textarea data-field="notes" rows="3"></textarea>
+          </label>
+        </div>
+      </article>
+    </template>
+
+    <datalist id="filialSuggestions"></datalist>
+    <datalist id="situacaoSuggestions"></datalist>
+    <datalist id="tipoCategoriaSuggestions"></datalist>
+    <datalist id="zonaSuggestions"></datalist>
+    <datalist id="centroCustoSuggestions"></datalist>
+    <datalist id="frotaSuggestions"></datalist>
+    <datalist id="placaSuggestions"></datalist>
+    <datalist id="kmSuggestions"></datalist>
+    <datalist id="km2Suggestions"></datalist>
+    <datalist id="manutencaoSuggestions"></datalist>
+    <datalist id="osSuggestions"></datalist>
+
+    <script src="./filter-options.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

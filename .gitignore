@@ -1,0 +1,10 @@
+node_modules/
+outputs/
+.git/
+.vscode/
+maintenance_xga16ack/
+rua-do-brasil-master/
+rua-do-brasil-publish/
+temp_support_snippet.txt
+*.pyc
+__pycache__/

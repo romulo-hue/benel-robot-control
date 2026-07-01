@@ -1,0 +1,14 @@
+{
+  "name": "benel-guberman-robot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "run:config": "node run_benel_robot_from_config.mjs",
+    "run:scheduler": "node benel_robot_scheduler.mjs",
+    "run:server": "node benel_robot_control_server.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.54.0"
+  }
+}

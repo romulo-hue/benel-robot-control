@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: benel-robot-control
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: TZ
+        value: America/Sao_Paulo
+      - key: BENEL_HEADLESS
+        value: "true"
+      - key: BENEL_CONFIG_PATH
+        value: /app/config/benel-guberman-config.json
+      - key: BENEL_PROFILE_DIR
+        value: /app/data/profile
+      - key: BENEL_SCREENSHOT_DIR
+        value: /app/data/screenshots
+      - key: BENEL_SCHEDULER_STATE_PATH
+        value: /app/data/cloud-scheduler-state.json
+      - key: BENEL_LOGIN_USER
+        sync: false
+      - key: BENEL_LOGIN_PASSWORD
+        sync: false
+    disk:
+      name: benel-robot-disk
+      mountPath: /app/data
+      sizeGB: 5
