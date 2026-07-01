@@ -6,6 +6,7 @@ param(
   [string]$TipoCategoria,
   [string]$Frota,
   [string]$Placa,
+  [int]$SupervisorIndex,
   [string]$Km,
   [string]$Km2,
   [string]$Manutencao,
@@ -42,6 +43,7 @@ if ($CentroCusto) { $arguments += @("--centro-custo", $CentroCusto) }
 if ($TipoCategoria) { $arguments += @("--tipo-categoria", $TipoCategoria) }
 if ($Frota) { $arguments += @("--frota", $Frota) }
 if ($Placa) { $arguments += @("--placa", $Placa) }
+if ($SupervisorIndex -gt 0) { $arguments += @("--supervisor", $SupervisorIndex) }
 if ($Km) { $arguments += @("--km", $Km) }
 if ($Km2) { $arguments += @("--km2", $Km2) }
 if ($Manutencao) { $arguments += @("--manutencao", $Manutencao) }

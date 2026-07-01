@@ -45,6 +45,7 @@ function createCycle(overrides = {}) {
     centroCusto: "",
     frota: "",
     placa: "",
+    supervisorIndex: "",
     km: "",
     km2: "",
     manutencao: "",
@@ -249,6 +250,7 @@ function cycleArgMap(cycle) {
     ["-CentroCusto", cycle.centroCusto],
     ["-Frota", cycle.frota],
     ["-Placa", cycle.placa],
+    ["-SupervisorIndex", cycle.supervisorIndex],
     ["-Km", cycle.km],
     ["-Km2", cycle.km2],
     ["-Manutencao", cycle.manutencao],
@@ -489,6 +491,8 @@ function updateCycle(index, field, rawValue) {
     cycle.telegramEnabled = rawValue === "true";
   } else if (field === "page" || field === "repetitions") {
     cycle[field] = Math.max(1, Number(rawValue) || 1);
+  } else if (field === "supervisorIndex") {
+    cycle.supervisorIndex = rawValue === "" ? "" : Math.min(9, Math.max(1, Number(rawValue) || 1));
   } else {
     cycle[field] = rawValue;
   }

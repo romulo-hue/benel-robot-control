@@ -193,6 +193,7 @@ function buildRunnerArgs(cycle, actionWaitSeconds, options, isLastRun) {
     ["tipoCategoria", "--tipo-categoria"],
     ["frota", "--frota"],
     ["placa", "--placa"],
+    ["supervisorIndex", "--supervisor"],
     ["km", "--km"],
     ["km2", "--km2"],
     ["manutencao", "--manutencao"],

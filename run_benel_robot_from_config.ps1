@@ -209,6 +209,7 @@ for ($runIndex = 0; $runIndex -lt $expandedRuns.Count; $runIndex++) {
   if ($cycle.tipoCategoria) { $invokeParams.TipoCategoria = [string]$cycle.tipoCategoria }
   if ($cycle.frota) { $invokeParams.Frota = [string]$cycle.frota }
   if ($cycle.placa) { $invokeParams.Placa = [string]$cycle.placa }
+  if ($null -ne $cycle.supervisorIndex -and [string]$cycle.supervisorIndex -ne "") { $invokeParams.SupervisorIndex = [int]$cycle.supervisorIndex }
   if ($cycle.km) { $invokeParams.Km = [string]$cycle.km }
   if ($cycle.km2) { $invokeParams.Km2 = [string]$cycle.km2 }
   if ($cycle.manutencao) { $invokeParams.Manutencao = [string]$cycle.manutencao }

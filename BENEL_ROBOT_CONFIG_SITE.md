@@ -37,6 +37,7 @@ Filtros mapeados hoje no relatorio 28:
 - `tipoCategoria`
 - `frota`
 - `placa`
+- `supervisorIndex` (`1` a `9`, da esquerda para a direita nas fotos dos supervisores)
 - `km` (campo 1)
 - `km2` (campo 2)
 - `manutencao`

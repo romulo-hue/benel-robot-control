@@ -84,6 +84,12 @@ function parseArgs(argv) {
       case "vence-dia":
         options.venceDia = nextValue;
         break;
+      case "supervisor":
+        options.supervisorIndex = Number(nextValue);
+        if (!Number.isInteger(options.supervisorIndex) || options.supervisorIndex < 1 || options.supervisorIndex > 9) {
+          throw new Error("O argumento --supervisor precisa ser um numero inteiro entre 1 e 9.");
+        }
+        break;
       case "page":
         options.page = Number(nextValue);
         if (!Number.isInteger(options.page) || options.page <= 0) {
@@ -498,6 +504,7 @@ async function inspectPowerBiScreen(page) {
       hasPageCounter: false,
       filterHits: 0,
       hasVisualSurface: false,
+      visibleLoadingIndicators: 0,
       hasError: false,
       snippet: "",
     };
@@ -525,6 +532,35 @@ async function inspectPowerBiScreen(page) {
     const hasVisualSurface = Array.from(
       document.querySelectorAll("table, svg, canvas, [role='grid'], .tablix, .pivotTable, .visualContainer"),
     ).some(isVisible);
+    const loadingSelector = [
+      '[class*="spinner"]',
+      '[class*="Spinner"]',
+      '[class*="loading"]',
+      '[class*="Loading"]',
+      '[class*="loader"]',
+      '[class*="Loader"]',
+      '[class*="progress"]',
+      '[class*="Progress"]',
+      '[class*="wait"]',
+      '[class*="Wait"]',
+      '[aria-label*="carreg"]',
+      '[aria-label*="Carreg"]',
+      '[aria-label*="loading"]',
+      '[aria-label*="Loading"]',
+      '[title*="carreg"]',
+      '[title*="Carreg"]',
+      '[title*="loading"]',
+      '[title*="Loading"]',
+    ].join(", ");
+    const visibleLoadingIndicators = Array.from(document.querySelectorAll(loadingSelector)).filter((element) => {
+      if (!isVisible(element)) {
+        return false;
+      }
+
+      const rect = element.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      return area > 0 && area < 200000;
+    }).length;
     const hasError = /N[AÃ]O FOI POSS[IÍ]VEL CARREGAR ESTE RELAT[OÓ]RIO|ATUALIZE A P[AÁ]GINA OU ENTRE NOVAMENTE/i.test(
       upperText,
     );
@@ -533,6 +569,7 @@ async function inspectPowerBiScreen(page) {
       hasPageCounter,
       filterHits,
       hasVisualSurface,
+      visibleLoadingIndicators,
       hasError,
       snippet: bodyText.slice(0, 400),
     };
@@ -541,11 +578,24 @@ async function inspectPowerBiScreen(page) {
 
 async function waitForPowerBiInteractiveScreen(page, label) {
   let lastState = null;
+  let consecutiveReadyChecks = 0;
 
   for (let attempt = 0; attempt < 90; attempt += 1) {
     lastState = await inspectPowerBiScreen(page);
 
-    if (lastState.hasPageCounter && lastState.filterHits >= 3 && lastState.hasVisualSurface) {
+    const isReady =
+      lastState.hasPageCounter &&
+      lastState.filterHits >= 3 &&
+      lastState.hasVisualSurface &&
+      lastState.visibleLoadingIndicators === 0;
+
+    if (isReady) {
+      consecutiveReadyChecks += 1;
+    } else {
+      consecutiveReadyChecks = 0;
+    }
+
+    if (consecutiveReadyChecks >= 3) {
       console.log(`OK: ${label} carregada no Power BI`);
       return;
     }
@@ -558,7 +608,9 @@ async function waitForPowerBiInteractiveScreen(page, label) {
   }
 
   throw new Error(
-    `O Power BI nao terminou de carregar a ${label}. Estado final: contador=${lastState?.hasPageCounter}, filtros=${lastState?.filterHits}, visual=${lastState?.hasVisualSurface}.`,
+    `O Power BI nao terminou de carregar a ${label}. ` +
+      `Estado final: contador=${lastState?.hasPageCounter}, filtros=${lastState?.filterHits}, ` +
+      `visual=${lastState?.hasVisualSurface}, carregando=${lastState?.visibleLoadingIndicators}.`,
   );
 }
 
@@ -1095,10 +1147,82 @@ async function waitForDropdownOptions(page, popup, label) {
   throw new Error(`O popup do filtro ${label} abriu, mas as opcoes nao carregaram.`);
 }
 
+function normalizeComparableText(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeDigitsOnly(value) {
+  const digits = String(value ?? "").replace(/\D+/g, "");
+  return digits.replace(/^0+(?=\d)/, "");
+}
+
+function textMatchesExpectedValue(currentValue, expectedValue) {
+  const currentNormalized = normalizeComparableText(currentValue);
+  const expectedNormalized = normalizeComparableText(expectedValue);
+
+  if (!currentNormalized || !expectedNormalized) {
+    return false;
+  }
+
+  if (currentNormalized === expectedNormalized || currentNormalized.includes(expectedNormalized)) {
+    return true;
+  }
+
+  const currentDigits = normalizeDigitsOnly(currentValue);
+  const expectedDigits = normalizeDigitsOnly(expectedValue);
+
+  if (currentDigits && expectedDigits && currentDigits === expectedDigits) {
+    return true;
+  }
+
+  return false;
+}
+
+async function listDropdownOptions(popup) {
+  return popup.locator('[role="option"], .slicerItemContainer').evaluateAll((nodes) =>
+    nodes.map((node, index) => {
+      const text = (node.innerText || node.textContent || "").replace(/\s+/g, " ").trim();
+      const title = (node.getAttribute("title") || "").replace(/\s+/g, " ").trim();
+      return {
+        index,
+        text,
+        title,
+      };
+    }),
+  );
+}
+
+function findMatchingDropdownOption(options, expectedValue) {
+  const exactMatch = options.find(
+    (option) =>
+      textMatchesExpectedValue(option.title, expectedValue) || textMatchesExpectedValue(option.text, expectedValue),
+  );
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const expectedNormalized = normalizeComparableText(expectedValue);
+  if (!expectedNormalized) {
+    return null;
+  }
+
+  return (
+    options.find((option) => normalizeComparableText(option.title).includes(expectedNormalized)) ||
+    options.find((option) => normalizeComparableText(option.text).includes(expectedNormalized)) ||
+    null
+  );
+}
+
 async function waitForDropdownValue(page, locator, expectedValue, label) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const text = ((await locator.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
-    if (text.includes(expectedValue)) {
+    if (textMatchesExpectedValue(text, expectedValue)) {
       console.log(`OK: Filtro ${label} confirmado com ${expectedValue}`);
       return;
     }
@@ -1140,6 +1264,7 @@ async function selectDropdownValue(page, surface, locator, filter, normalizedVal
   if ((await searchInput.count()) > 0 && (await searchInput.isVisible().catch(() => false))) {
     await searchInput.fill("");
     await searchInput.fill(normalizedValue);
+    await searchInput.press("Enter").catch(() => {});
     await page.waitForTimeout(600);
   }
 
@@ -1176,7 +1301,37 @@ async function selectDropdownValue(page, surface, locator, filter, normalizedVal
     }
   }
 
-  throw new Error(`Nao encontrei a opcao ${normalizedValue} no filtro ${filter.label}.`);
+  const optionSnapshot = await listDropdownOptions(popup);
+  const matchedOption = findMatchingDropdownOption(optionSnapshot, normalizedValue);
+
+  if (matchedOption) {
+    const fallbackOption = popup.locator('[role="option"], .slicerItemContainer').nth(matchedOption.index);
+    await fallbackOption.scrollIntoViewIfNeeded().catch(() => {});
+    await page.waitForTimeout(250);
+    await fallbackOption.click().catch(async () => {
+      await fallbackOption.evaluate((node) => node.click());
+    });
+    await page.waitForTimeout(800);
+    await waitForDropdownValue(page, locator, normalizedValue, filter.label);
+
+    if ((await locator.getAttribute("aria-expanded").catch(() => null)) === "true") {
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.waitForTimeout(300);
+    }
+
+    return;
+  }
+
+  const visibleOptionsPreview = optionSnapshot
+    .map((option) => option.title || option.text)
+    .filter((value) => value)
+    .slice(0, 12)
+    .join(", ");
+
+  throw new Error(
+    `Nao encontrei a opcao ${normalizedValue} no filtro ${filter.label}. ` +
+      `Primeiras opcoes visiveis: ${visibleOptionsPreview || "nenhuma opcao visivel"}.`,
+  );
 }
 
 function normalizeFilterValue(filter) {
@@ -1224,6 +1379,175 @@ async function applyOptionalFilters(page, options) {
   }
 }
 
+async function listSupervisorTiles(page) {
+  const powerBiFrame = getPowerBiFrame(page);
+  if (!powerBiFrame) {
+    throw new Error("Frame do Power BI nao encontrado para localizar os supervisores.");
+  }
+
+  return powerBiFrame.evaluate(() => {
+    const isVisible = (element) => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        style.opacity !== "0" &&
+        !element.hasAttribute("hidden")
+      );
+    };
+
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const rawCandidates = Array.from(document.querySelectorAll("img, image, [role='img']")).flatMap((element) => {
+      const clickable =
+        element.closest("[role='button'], button, a, [tabindex], .slicerItemContainer, [aria-label], [title]") ||
+        element;
+
+      if (!isVisible(element) && !isVisible(clickable)) {
+        return [];
+      }
+
+      const elementRect = element.getBoundingClientRect();
+      const clickableRect = clickable.getBoundingClientRect();
+      const rect =
+        clickableRect.width > 0 && clickableRect.height > 0 && clickableRect.width < 160 && clickableRect.height < 160
+          ? clickableRect
+          : elementRect;
+
+      if (
+        rect.width < 12 ||
+        rect.height < 12 ||
+        rect.width > 120 ||
+        rect.height > 120 ||
+        rect.top < 40 ||
+        rect.top > 220 ||
+        rect.left < viewportWidth * 0.55
+      ) {
+        return [];
+      }
+
+      const labelParts = [
+        element.getAttribute("alt"),
+        element.getAttribute("aria-label"),
+        element.getAttribute("title"),
+        clickable.getAttribute("aria-label"),
+        clickable.getAttribute("title"),
+      ]
+        .filter(Boolean)
+        .map((value) => value.replace(/\s+/g, " ").trim());
+
+      return [
+        {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+          centerX: rect.left + rect.width / 2,
+          centerY: rect.top + rect.height / 2,
+          label: labelParts.join(" | "),
+        },
+      ];
+    });
+
+    if (!rawCandidates.length) {
+      return [];
+    }
+
+    const groupedByRow = new Map();
+    for (const candidate of rawCandidates) {
+      const bucket = Math.round(candidate.centerY / 12) * 12;
+      const existing = groupedByRow.get(bucket) || [];
+      existing.push(candidate);
+      groupedByRow.set(bucket, existing);
+    }
+
+    const [, bestRowCandidates] =
+      Array.from(groupedByRow.entries()).sort((left, right) => right[1].length - left[1].length)[0] || [];
+
+    if (!bestRowCandidates || !bestRowCandidates.length) {
+      return [];
+    }
+
+    const deduped = [];
+    for (const candidate of bestRowCandidates.sort((left, right) => left.left - right.left)) {
+      const alreadyIncluded = deduped.some(
+        (existing) =>
+          Math.abs(existing.centerX - candidate.centerX) < 8 && Math.abs(existing.centerY - candidate.centerY) < 8,
+      );
+
+      if (!alreadyIncluded) {
+        deduped.push(candidate);
+      }
+    }
+
+    return deduped.map((candidate, index) => ({
+      ...candidate,
+      position: index + 1,
+    }));
+  });
+}
+
+async function waitForSupervisorTilesReady(page, supervisorIndex) {
+  let lastTiles = [];
+
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await waitForPowerBiInteractiveScreen(page, "antes da selecao do supervisor");
+    lastTiles = await listSupervisorTiles(page);
+
+    if (lastTiles.length >= supervisorIndex) {
+      console.log(`OK: Blocos de supervisor detectados (${lastTiles.length} visiveis)`);
+      return lastTiles;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  const preview = lastTiles
+    .map((tile) => `${tile.position}:${tile.label || `x=${Math.round(tile.left)}`}`)
+    .slice(0, 12)
+    .join(", ");
+
+  throw new Error(
+    `Nao encontrei o supervisor ${supervisorIndex}. ` +
+      `Blocos visiveis detectados: ${lastTiles.length}. ${preview ? `Mapa atual: ${preview}.` : ""}`,
+  );
+}
+
+async function applySupervisorFilter(page, options) {
+  if (!options.supervisorIndex) {
+    return;
+  }
+
+  const tiles = await waitForSupervisorTilesReady(page, options.supervisorIndex);
+  const targetTile = tiles[options.supervisorIndex - 1];
+  if (!targetTile) {
+    throw new Error(`O supervisor ${options.supervisorIndex} nao esta disponivel para clique.`);
+  }
+
+  const frameElement = page.locator('iframe[src*="app.powerbi.com"]').first();
+  const frameBox = await frameElement.boundingBox();
+  if (!frameBox) {
+    throw new Error("Nao consegui medir a area do frame do Power BI para clicar no supervisor.");
+  }
+
+  const clickX = frameBox.x + targetTile.centerX;
+  const clickY = frameBox.y + targetTile.centerY;
+
+  console.log(
+    `Aplicando filtro SUPERVISOR: ${options.supervisorIndex} (da esquerda para a direita)` +
+      `${targetTile.label ? ` - ${targetTile.label}` : ""}`,
+  );
+
+  await page.mouse.move(clickX, clickY).catch(() => {});
+  await page.waitForTimeout(150);
+  await page.mouse.click(clickX, clickY);
+  await page.waitForTimeout(1500);
+  await waitForPowerBiInteractiveScreen(page, `apos supervisor ${options.supervisorIndex}`);
+  await pauseBetweenActions(page, options, `supervisor ${options.supervisorIndex}`);
+}
+
 async function closeOpenReportPopups(page) {
   const surface = getPowerBiFrame(page);
   if (!surface) {
@@ -1258,11 +1582,17 @@ async function closeOpenReportPopups(page) {
   }
 }
 
+async function waitForScreenshotReady(page) {
+  await waitForPowerBiInteractiveScreen(page, "tela final para captura");
+  await page.waitForTimeout(1500);
+}
+
 async function saveEvidence(page, options) {
   if (!options.screenshot) {
     return;
   }
 
+  await waitForScreenshotReady(page);
   await closeOpenReportPopups(page);
   await fs.mkdir(SCREENSHOT_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -1293,6 +1623,7 @@ async function main() {
     await goToReportPage(page, options.page);
     await pauseBetweenActions(page, options, `navegacao para a pagina ${options.page}`);
     await applyOptionalFilters(page, options);
+    await applySupervisorFilter(page, options);
     await saveEvidence(page, options);
 
     console.log("Fluxo concluido. O relatorio 28 foi aberto.");
