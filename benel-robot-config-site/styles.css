@@ -236,8 +236,18 @@ h1 {
   grid-template-columns: 1fr;
 }
 
+.supervisor-map-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .cycle-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.supervisor-point-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .field {
@@ -318,7 +328,22 @@ textarea:focus {
   padding: 20px;
 }
 
+.supervisor-point-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 250, 241, 0.92));
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 20px;
+}
+
 .cycle-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.supervisor-point-header {
   display: flex;
   justify-content: space-between;
   gap: 14px;
@@ -384,6 +409,7 @@ textarea:focus {
 .app-shell,
 .panel,
 .cycle-card,
+.supervisor-point-card,
 .metric-card,
 .status-card {
   animation: rise-in 320ms ease both;
@@ -409,11 +435,16 @@ textarea:focus {
 
   .schedule-grid,
   .cycle-grid,
+  .supervisor-map-grid,
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .notes-field {
+    grid-column: span 2;
+  }
+
+  .telegram-field {
     grid-column: span 2;
   }
 
@@ -435,6 +466,8 @@ textarea:focus {
 
   .schedule-grid,
   .cycle-grid,
+  .supervisor-map-grid,
+  .supervisor-point-grid,
   .summary-grid,
   .preview-actions {
     grid-template-columns: 1fr;
@@ -444,7 +477,12 @@ textarea:focus {
     grid-column: span 1;
   }
 
+  .telegram-field {
+    grid-column: span 1;
+  }
+
   .cycle-header,
+  .supervisor-point-header,
   .panel-heading {
     flex-direction: column;
   }

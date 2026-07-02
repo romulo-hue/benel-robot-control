@@ -13,8 +13,93 @@ const SCREENSHOT_DIR = process.env.BENEL_SCREENSHOT_DIR || path.join(__dirname, 
 const TARGET_REPORT_PAGE = 28;
 const HEADLESS = /^true$/i.test(process.env.BENEL_HEADLESS || "false");
 const SUPERVISOR_COUNT = 9;
+const LEGACY_SUPERVISOR_CLICK_POINTS = Object.freeze([
+  { index: 1, xPercent: 78.5, yPercent: 3.0 },
+  { index: 2, xPercent: 81.0, yPercent: 3.0 },
+  { index: 3, xPercent: 83.5, yPercent: 3.0 },
+  { index: 4, xPercent: 86.0, yPercent: 3.0 },
+  { index: 5, xPercent: 88.6, yPercent: 3.0 },
+  { index: 6, xPercent: 91.0, yPercent: 3.0 },
+  { index: 7, xPercent: 93.5, yPercent: 3.0 },
+  { index: 8, xPercent: 95.9, yPercent: 3.0 },
+  { index: 9, xPercent: 98.4, yPercent: 3.0 },
+]);
+const DEFAULT_SUPERVISOR_CLICK_POINTS = Object.freeze([
+  { index: 1, xPercent: 68.2, yPercent: 9.1 },
+  { index: 2, xPercent: 69.8, yPercent: 9.1 },
+  { index: 3, xPercent: 71.4, yPercent: 9.1 },
+  { index: 4, xPercent: 73.0, yPercent: 9.1 },
+  { index: 5, xPercent: 74.6, yPercent: 9.1 },
+  { index: 6, xPercent: 76.1, yPercent: 9.1 },
+  { index: 7, xPercent: 77.7, yPercent: 9.1 },
+  { index: 8, xPercent: 79.2, yPercent: 9.1 },
+  { index: 9, xPercent: 80.9, yPercent: 9.1 },
+]);
 const SUPERVISOR_PRIMARY_SELECTOR = "svg image";
 const SUPERVISOR_FALLBACK_SELECTOR = "img";
+const SUPERVISOR_CLICK_MAP = loadSupervisorClickMap();
+
+function clampPercent(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(parsed * 10) / 10));
+}
+
+function supervisorMapMatches(referencePoints, actualPoints) {
+  if (!Array.isArray(actualPoints) || actualPoints.length !== referencePoints.length) {
+    return false;
+  }
+
+  return referencePoints.every((referencePoint) => {
+    const actualPoint = actualPoints.find((point) => Number(point?.index) === referencePoint.index);
+    if (!actualPoint) {
+      return false;
+    }
+
+    return Number(actualPoint.xPercent) === referencePoint.xPercent && Number(actualPoint.yPercent) === referencePoint.yPercent;
+  });
+}
+
+function loadSupervisorClickMap() {
+  const defaults = DEFAULT_SUPERVISOR_CLICK_POINTS.map((point) => ({ ...point }));
+  const raw = process.env.BENEL_SUPERVISOR_CLICK_MAP_JSON?.trim();
+  if (!raw) {
+    return defaults;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const positions = Array.isArray(parsed?.positions) ? parsed.positions : [];
+    const migratedPositions = supervisorMapMatches(LEGACY_SUPERVISOR_CLICK_POINTS, positions)
+      ? DEFAULT_SUPERVISOR_CLICK_POINTS
+      : positions;
+    const byIndex = new Map(
+      migratedPositions
+        .map((point) => [Number(point?.index), point])
+        .filter(([index]) => Number.isInteger(index) && index >= 1 && index <= SUPERVISOR_COUNT),
+    );
+
+    return defaults.map((defaultPoint) => {
+      const configuredPoint = byIndex.get(defaultPoint.index) || {};
+      return {
+        index: defaultPoint.index,
+        xPercent: clampPercent(configuredPoint.xPercent, defaultPoint.xPercent),
+        yPercent: clampPercent(configuredPoint.yPercent, defaultPoint.yPercent),
+      };
+    });
+  } catch (error) {
+    console.warn("Falha ao interpretar BENEL_SUPERVISOR_CLICK_MAP_JSON. Vou usar o mapa padrao de supervisores.");
+    console.warn(String(error.message || error));
+    return defaults;
+  }
+}
+
+function getSupervisorClickPoint(supervisorIndex) {
+  return SUPERVISOR_CLICK_MAP.find((point) => point.index === supervisorIndex) || null;
+}
 
 function parseArgs(argv) {
   const options = {
@@ -1637,16 +1722,30 @@ async function waitForSupervisorTilesReady(page, supervisorIndex, options = {}) 
   );
 }
 
-async function clickSupervisorTile(page, tile) {
-  const locator = tile.frame.locator(tile.selector || SUPERVISOR_PRIMARY_SELECTOR).nth(tile.elementIndex);
-  const box = await locator.boundingBox();
-  if (!box) {
-    throw new Error("Nao consegui medir o bloco do supervisor para clicar.");
+async function getPowerBiFrameBox(page) {
+  const powerBiFrame = getPowerBiFrame(page);
+  if (!powerBiFrame) {
+    throw new Error("Nao encontrei o frame do Power BI para clicar no supervisor.");
   }
 
-  const stepX = Number.isFinite(tile.stepX) && tile.stepX > 0 ? tile.stepX : box.width;
-  const clickX = Math.max(0, tile.left - stepX / 2);
-  const clickY = box.y + box.height / 2;
+  const frameElement = await powerBiFrame.frameElement();
+  const box = await frameElement.boundingBox();
+  if (!box) {
+    throw new Error("Nao consegui medir a area do Power BI para clicar no supervisor.");
+  }
+
+  return box;
+}
+
+async function clickSupervisorTile(page, supervisorIndex) {
+  const point = getSupervisorClickPoint(supervisorIndex);
+  if (!point) {
+    throw new Error(`Nao encontrei as coordenadas mapeadas para o supervisor ${supervisorIndex}.`);
+  }
+
+  const box = await getPowerBiFrameBox(page);
+  const clickX = box.x + (box.width * point.xPercent) / 100;
+  const clickY = box.y + (box.height * point.yPercent) / 100;
 
   await page.mouse.move(clickX, clickY).catch(() => {});
   await page.waitForTimeout(150);
@@ -1658,23 +1757,19 @@ async function applySupervisorFilter(page, options) {
     return;
   }
 
-  let tiles = await waitForSupervisorTilesReady(page, 1);
-  if (tiles.length < SUPERVISOR_COUNT) {
-    await resetPersistedFiltersBeforeSupervisor(page);
-  }
-
-  tiles = await waitForSupervisorTilesReady(page, options.supervisorIndex, { requireFullGallery: true });
-  const targetTile = tiles[options.supervisorIndex - 1];
-  if (!targetTile) {
-    throw new Error(`O supervisor ${options.supervisorIndex} nao esta disponivel para clique.`);
+  const point = getSupervisorClickPoint(options.supervisorIndex);
+  if (!point) {
+    throw new Error(`O supervisor ${options.supervisorIndex} nao possui um ponto de clique configurado.`);
   }
 
   console.log(
-    `Aplicando filtro SUPERVISOR: ${options.supervisorIndex} (da esquerda para a direita)` +
-      `${targetTile.label ? ` - ${targetTile.label}` : ""}`,
+    `Aplicando filtro SUPERVISOR: ${options.supervisorIndex} via clique mapeado ` +
+      `(${point.xPercent}%, ${point.yPercent}%)`,
   );
 
-  await clickSupervisorTile(page, targetTile);
+  await waitForPowerBiInteractiveScreen(page, "antes da selecao do supervisor");
+  await closeOpenReportPopups(page);
+  await clickSupervisorTile(page, options.supervisorIndex);
   await page.waitForTimeout(1500);
   await waitForPowerBiInteractiveScreen(page, `apos supervisor ${options.supervisorIndex}`);
   await pauseBetweenActions(page, options, `supervisor ${options.supervisorIndex}`);

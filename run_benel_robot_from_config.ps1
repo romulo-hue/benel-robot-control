@@ -141,6 +141,13 @@ if (-not (Test-Path -LiteralPath $runnerPath)) {
 $rawJson = Get-Content -LiteralPath $ConfigPath -Raw
 $config = $rawJson | ConvertFrom-Json
 $telegramBotToken = ""
+$previousSupervisorClickMapJson = $env:BENEL_SUPERVISOR_CLICK_MAP_JSON
+
+if ($null -ne $config.supervisorClickMap) {
+  $env:BENEL_SUPERVISOR_CLICK_MAP_JSON = $config.supervisorClickMap | ConvertTo-Json -Depth 8 -Compress
+} else {
+  Remove-Item Env:BENEL_SUPERVISOR_CLICK_MAP_JSON -ErrorAction SilentlyContinue
+}
 
 if ($null -ne $config.integrations -and $null -ne $config.integrations.telegram -and $config.integrations.telegram.botToken) {
   $telegramBotToken = [string]$config.integrations.telegram.botToken
@@ -185,66 +192,75 @@ foreach ($cycle in $cycles) {
   }
 }
 
-Write-Host "JSON carregado: $ConfigPath"
-Write-Host "Ciclos ativos: $($cycles.Count)"
-Write-Host "Execucoes totais: $($expandedRuns.Count)"
+try {
+  Write-Host "JSON carregado: $ConfigPath"
+  Write-Host "Ciclos ativos: $($cycles.Count)"
+  Write-Host "Execucoes totais: $($expandedRuns.Count)"
 
-for ($runIndex = 0; $runIndex -lt $expandedRuns.Count; $runIndex++) {
-  $run = $expandedRuns[$runIndex]
-  $cycle = $run.Cycle
+  for ($runIndex = 0; $runIndex -lt $expandedRuns.Count; $runIndex++) {
+    $run = $expandedRuns[$runIndex]
+    $cycle = $run.Cycle
 
-  Write-Host ""
-  Write-Host ("Iniciando ciclo {0}/{1}: {2} (repeticao {3}/{4})" -f ($runIndex + 1), $expandedRuns.Count, $cycle.name, $run.Iteration, $run.TotalIterations)
-  $screenshotBeforeRun = Get-LatestScreenshotFile -DirectoryPath $screenshotDir
+    Write-Host ""
+    Write-Host ("Iniciando ciclo {0}/{1}: {2} (repeticao {3}/{4})" -f ($runIndex + 1), $expandedRuns.Count, $cycle.name, $run.Iteration, $run.TotalIterations)
+    $screenshotBeforeRun = Get-LatestScreenshotFile -DirectoryPath $screenshotDir
 
-  $invokeParams = @{
-    Page = if ($null -ne $cycle.page -and [int]$cycle.page -gt 0) { [int]$cycle.page } else { 28 }
-  }
+    $invokeParams = @{
+      Page = if ($null -ne $cycle.page -and [int]$cycle.page -gt 0) { [int]$cycle.page } else { 28 }
+    }
 
-  if ($actionWaitSeconds -gt 0) { $invokeParams.ActionWaitSeconds = $actionWaitSeconds }
-  if ($cycle.filial) { $invokeParams.Filial = [string]$cycle.filial }
-  if ($cycle.zona) { $invokeParams.Zona = [string]$cycle.zona }
-  if ($cycle.situacao) { $invokeParams.Situacao = [string]$cycle.situacao }
-  if ($cycle.centroCusto) { $invokeParams.CentroCusto = [string]$cycle.centroCusto }
-  if ($cycle.tipoCategoria) { $invokeParams.TipoCategoria = [string]$cycle.tipoCategoria }
-  if ($cycle.frota) { $invokeParams.Frota = [string]$cycle.frota }
-  if ($cycle.placa) { $invokeParams.Placa = [string]$cycle.placa }
-  if ($null -ne $cycle.supervisorIndex -and [string]$cycle.supervisorIndex -ne "") { $invokeParams.SupervisorIndex = [int]$cycle.supervisorIndex }
-  if ($cycle.km) { $invokeParams.Km = [string]$cycle.km }
-  if ($cycle.km2) { $invokeParams.Km2 = [string]$cycle.km2 }
-  if ($cycle.manutencao) { $invokeParams.Manutencao = [string]$cycle.manutencao }
-  if ($cycle.os) { $invokeParams.Os = [string]$cycle.os }
-  if ($cycle.venceDia) { $invokeParams.VenceDia = [string]$cycle.venceDia }
-  if ($NoScreenshot) { $invokeParams.NoScreenshot = $true }
-  if ($KeepOpenLastRun -and $runIndex -eq ($expandedRuns.Count - 1)) { $invokeParams.KeepOpen = $true }
+    if ($actionWaitSeconds -gt 0) { $invokeParams.ActionWaitSeconds = $actionWaitSeconds }
+    if ($cycle.filial) { $invokeParams.Filial = [string]$cycle.filial }
+    if ($cycle.zona) { $invokeParams.Zona = [string]$cycle.zona }
+    if ($cycle.situacao) { $invokeParams.Situacao = [string]$cycle.situacao }
+    if ($cycle.centroCusto) { $invokeParams.CentroCusto = [string]$cycle.centroCusto }
+    if ($cycle.tipoCategoria) { $invokeParams.TipoCategoria = [string]$cycle.tipoCategoria }
+    if ($cycle.frota) { $invokeParams.Frota = [string]$cycle.frota }
+    if ($cycle.placa) { $invokeParams.Placa = [string]$cycle.placa }
+    if ($null -ne $cycle.supervisorIndex -and [string]$cycle.supervisorIndex -ne "") { $invokeParams.SupervisorIndex = [int]$cycle.supervisorIndex }
+    if ($cycle.km) { $invokeParams.Km = [string]$cycle.km }
+    if ($cycle.km2) { $invokeParams.Km2 = [string]$cycle.km2 }
+    if ($cycle.manutencao) { $invokeParams.Manutencao = [string]$cycle.manutencao }
+    if ($cycle.os) { $invokeParams.Os = [string]$cycle.os }
+    if ($cycle.venceDia) { $invokeParams.VenceDia = [string]$cycle.venceDia }
+    if ($NoScreenshot) { $invokeParams.NoScreenshot = $true }
+    if ($KeepOpenLastRun -and $runIndex -eq ($expandedRuns.Count - 1)) { $invokeParams.KeepOpen = $true }
 
-  & $runnerPath @invokeParams
+    & $runnerPath @invokeParams
 
-  $shouldSendTelegram = $false
-  if ($null -ne $cycle.telegramEnabled) {
-    $shouldSendTelegram = [System.Convert]::ToBoolean($cycle.telegramEnabled)
-  }
+    $shouldSendTelegram = $false
+    if ($null -ne $cycle.telegramEnabled) {
+      $shouldSendTelegram = [System.Convert]::ToBoolean($cycle.telegramEnabled)
+    }
 
-  if ($shouldSendTelegram) {
-    $chatId = if ($cycle.telegramChatId) { [string]$cycle.telegramChatId } else { "" }
-    $caption = if ($cycle.telegramMessage) { [string]$cycle.telegramMessage } else { "" }
+    if ($shouldSendTelegram) {
+      $chatId = if ($cycle.telegramChatId) { [string]$cycle.telegramChatId } else { "" }
+      $caption = if ($cycle.telegramMessage) { [string]$cycle.telegramMessage } else { "" }
 
-    if (-not $telegramBotToken) {
-      Write-Warning "Ciclo com Telegram ativo, mas o token global do bot nao foi preenchido."
-    } elseif (-not $chatId) {
-      Write-Warning "Ciclo com Telegram ativo, mas o grupo/chat ID nao foi preenchido."
-    } elseif ($NoScreenshot) {
-      Write-Warning "Ciclo com Telegram ativo, mas a execucao atual esta sem screenshot."
-    } else {
-      $newScreenshot = Resolve-NewScreenshotFile -DirectoryPath $screenshotDir -PreviousFile $screenshotBeforeRun
-
-      if ($null -eq $newScreenshot) {
-        Write-Warning "Nao encontrei um print novo para enviar ao Telegram neste ciclo."
+      if (-not $telegramBotToken) {
+        Write-Warning "Ciclo com Telegram ativo, mas o token global do bot nao foi preenchido."
+      } elseif (-not $chatId) {
+        Write-Warning "Ciclo com Telegram ativo, mas o grupo/chat ID nao foi preenchido."
+      } elseif ($NoScreenshot) {
+        Write-Warning "Ciclo com Telegram ativo, mas a execucao atual esta sem screenshot."
       } else {
-        Write-Host "Enviando print ao Telegram: $($newScreenshot.FullName)"
-        Send-TelegramPhoto -BotToken $telegramBotToken -ChatId $chatId -PhotoPath $newScreenshot.FullName -Caption $caption
-        Write-Host "OK: Print enviado ao Telegram"
+        $newScreenshot = Resolve-NewScreenshotFile -DirectoryPath $screenshotDir -PreviousFile $screenshotBeforeRun
+
+        if ($null -eq $newScreenshot) {
+          Write-Warning "Nao encontrei um print novo para enviar ao Telegram neste ciclo."
+        } else {
+          Write-Host "Enviando print ao Telegram: $($newScreenshot.FullName)"
+          Send-TelegramPhoto -BotToken $telegramBotToken -ChatId $chatId -PhotoPath $newScreenshot.FullName -Caption $caption
+          Write-Host "OK: Print enviado ao Telegram"
+        }
       }
     }
+  }
+}
+finally {
+  if ($null -ne $previousSupervisorClickMapJson) {
+    $env:BENEL_SUPERVISOR_CLICK_MAP_JSON = $previousSupervisorClickMapJson
+  } else {
+    Remove-Item Env:BENEL_SUPERVISOR_CLICK_MAP_JSON -ErrorAction SilentlyContinue
   }
 }

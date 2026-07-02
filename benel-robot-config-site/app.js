@@ -16,6 +16,28 @@ const SUPPORTS_SERVER_API = HOSTED_MODE && !IS_GITHUB_PAGES;
 const SERVER_CONFIG_ENDPOINT = "/api/config";
 const SERVER_RUN_NOW_ENDPOINT = "/api/run-now";
 const SERVER_HEALTH_ENDPOINT = "/api/health";
+const LEGACY_SUPERVISOR_CLICK_POINTS = [
+  { index: 1, xPercent: 78.5, yPercent: 3.0 },
+  { index: 2, xPercent: 81.0, yPercent: 3.0 },
+  { index: 3, xPercent: 83.5, yPercent: 3.0 },
+  { index: 4, xPercent: 86.0, yPercent: 3.0 },
+  { index: 5, xPercent: 88.6, yPercent: 3.0 },
+  { index: 6, xPercent: 91.0, yPercent: 3.0 },
+  { index: 7, xPercent: 93.5, yPercent: 3.0 },
+  { index: 8, xPercent: 95.9, yPercent: 3.0 },
+  { index: 9, xPercent: 98.4, yPercent: 3.0 },
+];
+const DEFAULT_SUPERVISOR_CLICK_POINTS = [
+  { index: 1, xPercent: 68.2, yPercent: 9.1 },
+  { index: 2, xPercent: 69.8, yPercent: 9.1 },
+  { index: 3, xPercent: 71.4, yPercent: 9.1 },
+  { index: 4, xPercent: 73.0, yPercent: 9.1 },
+  { index: 5, xPercent: 74.6, yPercent: 9.1 },
+  { index: 6, xPercent: 76.1, yPercent: 9.1 },
+  { index: 7, xPercent: 77.7, yPercent: 9.1 },
+  { index: 8, xPercent: 79.2, yPercent: 9.1 },
+  { index: 9, xPercent: 80.9, yPercent: 9.1 },
+];
 const REPORT_FILTERS = window.BENEL_FILTER_OPTIONS?.filters || {};
 const FILTER_LIST_IDS = {
   filial: "filialSuggestions",
@@ -30,6 +52,64 @@ const FILTER_LIST_IDS = {
   manutencao: "manutencaoSuggestions",
   os: "osSuggestions",
 };
+
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.round(parsed * 10) / 10));
+}
+
+function getDefaultSupervisorClickMap() {
+  return {
+    mode: "browser-click",
+    positions: DEFAULT_SUPERVISOR_CLICK_POINTS.map((point) => ({ ...point })),
+  };
+}
+
+function supervisorMapMatches(referencePoints, actualPoints) {
+  if (!Array.isArray(actualPoints) || actualPoints.length !== referencePoints.length) {
+    return false;
+  }
+
+  return referencePoints.every((referencePoint) => {
+    const actualPoint = actualPoints.find((point) => Number(point?.index) === referencePoint.index);
+    if (!actualPoint) {
+      return false;
+    }
+
+    return Number(actualPoint.xPercent) === referencePoint.xPercent && Number(actualPoint.yPercent) === referencePoint.yPercent;
+  });
+}
+
+function normalizeSupervisorClickMap(parsedMap = {}) {
+  const defaults = getDefaultSupervisorClickMap();
+  const incomingPositions = Array.isArray(parsedMap.positions) ? parsedMap.positions : [];
+  const migratedPositions = supervisorMapMatches(LEGACY_SUPERVISOR_CLICK_POINTS, incomingPositions)
+    ? DEFAULT_SUPERVISOR_CLICK_POINTS
+    : incomingPositions;
+  const incomingByIndex = new Map(
+    migratedPositions
+      .map((point) => [Number(point?.index), point])
+      .filter(([index]) => Number.isInteger(index) && index >= 1 && index <= 9),
+  );
+
+  return {
+    ...defaults,
+    ...(parsedMap || {}),
+    mode: "browser-click",
+    positions: defaults.positions.map((defaultPoint) => {
+      const incomingPoint = incomingByIndex.get(defaultPoint.index) || {};
+      return {
+        index: defaultPoint.index,
+        xPercent: clampNumber(incomingPoint.xPercent, 0, 100, defaultPoint.xPercent),
+        yPercent: clampNumber(incomingPoint.yPercent, 0, 100, defaultPoint.yPercent),
+      };
+    }),
+  };
+}
 
 function createCycle(overrides = {}) {
   return {
@@ -75,6 +155,7 @@ function getDefaultState() {
         botToken: "",
       },
     },
+    supervisorClickMap: getDefaultSupervisorClickMap(),
     cycles: [
       createCycle({
         name: "Ciclo base relatorio 28",
@@ -99,6 +180,7 @@ function hydrateState(parsed = {}) {
         ...((parsed.integrations && parsed.integrations.telegram) || {}),
       },
     },
+    supervisorClickMap: normalizeSupervisorClickMap(parsed.supervisorClickMap || {}),
     cycles: Array.isArray(parsed.cycles) && parsed.cycles.length
       ? parsed.cycles.map((cycle) => createCycle(cycle))
       : getDefaultState().cycles,
@@ -116,12 +198,15 @@ const elements = {
   actionWaitSeconds: document.querySelector("#actionWaitSeconds"),
   telegramBotToken: document.querySelector("#telegramBotToken"),
   weekdayButtons: document.querySelector("#weekdayButtons"),
+  supervisorMapList: document.querySelector("#supervisorMapList"),
+  supervisorPointTemplate: document.querySelector("#supervisorPointTemplate"),
   cyclesList: document.querySelector("#cyclesList"),
   cycleTemplate: document.querySelector("#cycleTemplate"),
   addCycleButton: document.querySelector("#addCycleButton"),
   saveConfigButton: document.querySelector("#saveConfigButton"),
   runNowButton: document.querySelector("#runNowButton"),
   resetConfigButton: document.querySelector("#resetConfigButton"),
+  resetSupervisorMapButton: document.querySelector("#resetSupervisorMapButton"),
   copyCommandsButton: document.querySelector("#copyCommandsButton"),
   exportJsonButton: document.querySelector("#exportJsonButton"),
   importJsonInput: document.querySelector("#importJsonInput"),
@@ -307,6 +392,10 @@ function buildCommandPreview() {
     lines.push("");
   }
 
+  lines.push("# O filtro de supervisor usa clique mapeado por coordenadas do navegador.");
+  lines.push("# Se voce ajustar as posicoes 1 a 9, prefira executar pelo JSON exportado.");
+  lines.push("");
+
   lines.push(
     "# Ou rode ciclo por ciclo com os comandos abaixo",
     "",
@@ -479,6 +568,44 @@ function renderWeekdayButtons() {
   });
 }
 
+function updateSupervisorMapPoint(index, field, rawValue) {
+  const point = state.supervisorClickMap.positions.find((entry) => entry.index === index);
+  const fallback = getDefaultSupervisorClickMap().positions.find((entry) => entry.index === index);
+  if (!point || !fallback) {
+    return;
+  }
+
+  point[field] = clampNumber(rawValue, 0, 100, fallback[field]);
+  saveState();
+}
+
+function renderSupervisorMap() {
+  if (!elements.supervisorMapList || !elements.supervisorPointTemplate) {
+    return;
+  }
+
+  elements.supervisorMapList.innerHTML = "";
+
+  state.supervisorClickMap.positions.forEach((point) => {
+    const node = elements.supervisorPointTemplate.content.firstElementChild.cloneNode(true);
+    node.querySelector(".supervisor-point-title").textContent = `Supervisor ${point.index}`;
+
+    node.querySelectorAll("[data-supervisor-map-field]").forEach((input) => {
+      const field = input.dataset.supervisorMapField;
+      input.value = String(point[field]);
+
+      const handlePointChange = (event) => {
+        updateSupervisorMapPoint(point.index, field, event.target.value);
+      };
+
+      input.addEventListener("input", handlePointChange);
+      input.addEventListener("change", handlePointChange);
+    });
+
+    elements.supervisorMapList.appendChild(node);
+  });
+}
+
 function updateCycle(index, field, rawValue) {
   const cycle = state.cycles[index];
   if (!cycle) {
@@ -573,6 +700,7 @@ function render() {
   setScheduleInputs();
   populateFilterSuggestionLists();
   renderWeekdayButtons();
+  renderSupervisorMap();
   renderCycles();
   refreshMetrics();
   saveState();
@@ -774,6 +902,11 @@ function attachActions() {
 
   elements.resetConfigButton.addEventListener("click", () => {
     state = getDefaultState();
+    render();
+  });
+
+  elements.resetSupervisorMapButton?.addEventListener("click", () => {
+    state.supervisorClickMap = getDefaultSupervisorClickMap();
     render();
   });
 
