@@ -13,7 +13,8 @@ const SCREENSHOT_DIR = process.env.BENEL_SCREENSHOT_DIR || path.join(__dirname, 
 const TARGET_REPORT_PAGE = 28;
 const HEADLESS = /^true$/i.test(process.env.BENEL_HEADLESS || "false");
 const SUPERVISOR_COUNT = 9;
-const SUPERVISOR_IMAGE_SELECTOR = "svg image, img";
+const SUPERVISOR_PRIMARY_SELECTOR = "svg image";
+const SUPERVISOR_FALLBACK_SELECTOR = "img";
 
 function parseArgs(argv) {
   const options = {
@@ -1411,7 +1412,36 @@ async function resetPersistedFiltersBeforeSupervisor(page) {
   }
 }
 
-async function listSupervisorTiles(page) {
+function dedupeAndSortSupervisorCandidates(candidates) {
+  const deduped = [];
+
+  for (const candidate of candidates.sort((left, right) => left.left - right.left)) {
+    const alreadyIncluded = deduped.some(
+      (existing) => Math.abs(existing.centerX - candidate.centerX) < 8 && Math.abs(existing.centerY - candidate.centerY) < 8,
+    );
+
+    if (!alreadyIncluded) {
+      deduped.push(candidate);
+    }
+  }
+
+  const centerSteps = deduped
+    .slice(1)
+    .map((candidate, index) => candidate.centerX - deduped[index].centerX)
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  const fallbackStep = deduped[0]?.width ?? 0;
+  const sortedSteps = [...centerSteps].sort((left, right) => left - right);
+  const stepX = sortedSteps.length ? sortedSteps[Math.floor(sortedSteps.length / 2)] : fallbackStep;
+
+  return deduped.map((candidate, index) => ({
+    ...candidate,
+    position: index + 1,
+    stepX,
+  }));
+}
+
+async function collectSupervisorTileGroups(page, selector, options = {}) {
   const viewport = await page
     .evaluate(() => ({
       width: window.innerWidth || document.documentElement.clientWidth || 0,
@@ -1419,7 +1449,7 @@ async function listSupervisorTiles(page) {
     }))
     .catch(() => ({ width: 0, height: 0 }));
 
-  const candidates = [];
+  const groups = [];
 
   for (const [frameIndex, frame] of page.frames().entries()) {
     let images = [];
@@ -1462,7 +1492,7 @@ async function listSupervisorTiles(page) {
             visible: isVisible(element),
           };
         });
-      }, SUPERVISOR_IMAGE_SELECTOR);
+      }, selector);
     } catch {
       continue;
     }
@@ -1471,7 +1501,8 @@ async function listSupervisorTiles(page) {
       continue;
     }
 
-    const imageLocator = frame.locator(SUPERVISOR_IMAGE_SELECTOR);
+    const imageLocator = frame.locator(selector);
+    const frameCandidates = [];
 
     for (const image of images) {
       if (!image.visible) {
@@ -1486,10 +1517,15 @@ async function listSupervisorTiles(page) {
       const centerX = box.x + box.width / 2;
       const centerY = box.y + box.height / 2;
       const roughlySquare = Math.abs(box.width - box.height) <= Math.max(14, Math.min(box.width, box.height) * 0.45);
+      const hasHostedPhotoUrl = /ibb\.co|png|jpg|jpeg|webp/i.test(image.href || "");
       const looksLikeSupervisorPhoto =
         image.tagName === "image" ||
-        /ibb\.co|png|jpg|jpeg|webp/i.test(image.href || "") ||
+        hasHostedPhotoUrl ||
         /supervisor|foto|imagem/i.test(image.label || "");
+
+      if (options.requireHostedPhotoUrl && !hasHostedPhotoUrl) {
+        continue;
+      }
 
       if (
         box.width < 16 ||
@@ -1510,9 +1546,10 @@ async function listSupervisorTiles(page) {
         continue;
       }
 
-      candidates.push({
+      frameCandidates.push({
         frame,
         frameIndex,
+        selector,
         elementIndex: image.elementIndex,
         href: image.href,
         label: image.label,
@@ -1524,42 +1561,49 @@ async function listSupervisorTiles(page) {
         centerY,
       });
     }
-  }
 
-  if (!candidates.length) {
-    return [];
-  }
-
-  const groupedByRow = new Map();
-  for (const candidate of candidates) {
-    const bucket = Math.round(candidate.centerY / 12) * 12;
-    const existing = groupedByRow.get(bucket) || [];
-    existing.push(candidate);
-    groupedByRow.set(bucket, existing);
-  }
-
-  const [, bestRowCandidates] =
-    Array.from(groupedByRow.entries()).sort((left, right) => right[1].length - left[1].length)[0] || [];
-
-  if (!bestRowCandidates || !bestRowCandidates.length) {
-    return [];
-  }
-
-  const deduped = [];
-  for (const candidate of bestRowCandidates.sort((left, right) => left.left - right.left)) {
-    const alreadyIncluded = deduped.some(
-      (existing) => Math.abs(existing.centerX - candidate.centerX) < 8 && Math.abs(existing.centerY - candidate.centerY) < 8,
-    );
-
-    if (!alreadyIncluded) {
-      deduped.push(candidate);
+    if (frameCandidates.length) {
+      groups.push(dedupeAndSortSupervisorCandidates(frameCandidates));
     }
   }
 
-  return deduped.map((candidate, index) => ({
-    ...candidate,
-    position: index + 1,
-  }));
+  return groups;
+}
+
+function chooseBestSupervisorGroup(groups) {
+  if (!groups.length) {
+    return [];
+  }
+
+  const sortedGroups = [...groups].sort((left, right) => {
+    const leftHosted = left.filter((candidate) => /ibb\.co|png|jpg|jpeg|webp/i.test(candidate.href || "")).length;
+    const rightHosted = right.filter((candidate) => /ibb\.co|png|jpg|jpeg|webp/i.test(candidate.href || "")).length;
+
+    if (rightHosted !== leftHosted) {
+      return rightHosted - leftHosted;
+    }
+
+    if (right.length !== left.length) {
+      return right.length - left.length;
+    }
+
+    return left[0].left - right[0].left;
+  });
+
+  return sortedGroups[0] || [];
+}
+
+async function listSupervisorTiles(page) {
+  const primaryGroups = await collectSupervisorTileGroups(page, SUPERVISOR_PRIMARY_SELECTOR);
+  const primaryBest = chooseBestSupervisorGroup(primaryGroups);
+  if (primaryBest.length) {
+    return primaryBest;
+  }
+
+  const fallbackGroups = await collectSupervisorTileGroups(page, SUPERVISOR_FALLBACK_SELECTOR, {
+    requireHostedPhotoUrl: true,
+  });
+  return chooseBestSupervisorGroup(fallbackGroups);
 }
 
 async function waitForSupervisorTilesReady(page, supervisorIndex, options = {}) {
@@ -1594,23 +1638,19 @@ async function waitForSupervisorTilesReady(page, supervisorIndex, options = {}) 
 }
 
 async function clickSupervisorTile(page, tile) {
-  const locator = tile.frame.locator(SUPERVISOR_IMAGE_SELECTOR).nth(tile.elementIndex);
-
-  try {
-    await locator.click({ force: true, timeout: 15000 });
-    return;
-  } catch (error) {
-    console.warn(`Clique direto no SVG do supervisor falhou; tentando clique por coordenada. Detalhe: ${error.message || error}`);
-  }
-
+  const locator = tile.frame.locator(tile.selector || SUPERVISOR_PRIMARY_SELECTOR).nth(tile.elementIndex);
   const box = await locator.boundingBox();
   if (!box) {
     throw new Error("Nao consegui medir o bloco do supervisor para clicar.");
   }
 
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+  const stepX = Number.isFinite(tile.stepX) && tile.stepX > 0 ? tile.stepX : box.width;
+  const clickX = Math.max(0, tile.left - stepX / 2);
+  const clickY = box.y + box.height / 2;
+
+  await page.mouse.move(clickX, clickY).catch(() => {});
   await page.waitForTimeout(150);
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.click(clickX, clickY);
 }
 
 async function applySupervisorFilter(page, options) {
