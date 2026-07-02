@@ -13,54 +13,43 @@ const SCREENSHOT_DIR = process.env.BENEL_SCREENSHOT_DIR || path.join(__dirname, 
 const TARGET_REPORT_PAGE = 28;
 const HEADLESS = /^true$/i.test(process.env.BENEL_HEADLESS || "false");
 const SUPERVISOR_COUNT = 9;
-const LEGACY_SUPERVISOR_CLICK_POINTS = Object.freeze([
-  { index: 1, xPercent: 78.5, yPercent: 3.0 },
-  { index: 2, xPercent: 81.0, yPercent: 3.0 },
-  { index: 3, xPercent: 83.5, yPercent: 3.0 },
-  { index: 4, xPercent: 86.0, yPercent: 3.0 },
-  { index: 5, xPercent: 88.6, yPercent: 3.0 },
-  { index: 6, xPercent: 91.0, yPercent: 3.0 },
-  { index: 7, xPercent: 93.5, yPercent: 3.0 },
-  { index: 8, xPercent: 95.9, yPercent: 3.0 },
-  { index: 9, xPercent: 98.4, yPercent: 3.0 },
-]);
+const SUPERVISOR_REFERENCE_VIEWPORT = Object.freeze({ width: 1536, height: 610 });
 const DEFAULT_SUPERVISOR_CLICK_POINTS = Object.freeze([
-  { index: 1, xPercent: 68.2, yPercent: 9.1 },
-  { index: 2, xPercent: 69.8, yPercent: 9.1 },
-  { index: 3, xPercent: 71.4, yPercent: 9.1 },
-  { index: 4, xPercent: 73.0, yPercent: 9.1 },
-  { index: 5, xPercent: 74.6, yPercent: 9.1 },
-  { index: 6, xPercent: 76.1, yPercent: 9.1 },
-  { index: 7, xPercent: 77.7, yPercent: 9.1 },
-  { index: 8, xPercent: 79.2, yPercent: 9.1 },
-  { index: 9, xPercent: 80.9, yPercent: 9.1 },
+  { index: 1, x: 1048, y: 56 },
+  { index: 2, x: 1072, y: 56 },
+  { index: 3, x: 1097, y: 56 },
+  { index: 4, x: 1121, y: 56 },
+  { index: 5, x: 1146, y: 56 },
+  { index: 6, x: 1169, y: 56 },
+  { index: 7, x: 1193, y: 56 },
+  { index: 8, x: 1217, y: 56 },
+  { index: 9, x: 1243, y: 56 },
 ]);
 const SUPERVISOR_PRIMARY_SELECTOR = "svg image";
 const SUPERVISOR_FALLBACK_SELECTOR = "img";
 const SUPERVISOR_CLICK_MAP = loadSupervisorClickMap();
 
-function clampPercent(value, fallback) {
+function clampPixel(value, fallback) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return fallback;
   }
 
-  return Math.min(100, Math.max(0, Math.round(parsed * 10) / 10));
+  return Math.max(0, Math.round(parsed));
 }
 
-function supervisorMapMatches(referencePoints, actualPoints) {
-  if (!Array.isArray(actualPoints) || actualPoints.length !== referencePoints.length) {
-    return false;
+function convertPercentPointToPixels(point) {
+  const xPercent = Number(point?.xPercent);
+  const yPercent = Number(point?.yPercent);
+  if (!Number.isFinite(xPercent) || !Number.isFinite(yPercent)) {
+    return null;
   }
 
-  return referencePoints.every((referencePoint) => {
-    const actualPoint = actualPoints.find((point) => Number(point?.index) === referencePoint.index);
-    if (!actualPoint) {
-      return false;
-    }
-
-    return Number(actualPoint.xPercent) === referencePoint.xPercent && Number(actualPoint.yPercent) === referencePoint.yPercent;
-  });
+  return {
+    index: Number(point.index),
+    x: Math.round((xPercent / 100) * SUPERVISOR_REFERENCE_VIEWPORT.width),
+    y: Math.round((yPercent / 100) * SUPERVISOR_REFERENCE_VIEWPORT.height),
+  };
 }
 
 function loadSupervisorClickMap() {
@@ -73,12 +62,17 @@ function loadSupervisorClickMap() {
   try {
     const parsed = JSON.parse(raw);
     const positions = Array.isArray(parsed?.positions) ? parsed.positions : [];
-    const migratedPositions = supervisorMapMatches(LEGACY_SUPERVISOR_CLICK_POINTS, positions)
-      ? DEFAULT_SUPERVISOR_CLICK_POINTS
-      : positions;
     const byIndex = new Map(
-      migratedPositions
-        .map((point) => [Number(point?.index), point])
+      positions
+        .map((point) => {
+          if (Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y))) {
+            return [Number(point.index), point];
+          }
+
+          const convertedPoint = convertPercentPointToPixels(point);
+          return convertedPoint ? [Number(convertedPoint.index), convertedPoint] : null;
+        })
+        .filter(Boolean)
         .filter(([index]) => Number.isInteger(index) && index >= 1 && index <= SUPERVISOR_COUNT),
     );
 
@@ -86,8 +80,8 @@ function loadSupervisorClickMap() {
       const configuredPoint = byIndex.get(defaultPoint.index) || {};
       return {
         index: defaultPoint.index,
-        xPercent: clampPercent(configuredPoint.xPercent, defaultPoint.xPercent),
-        yPercent: clampPercent(configuredPoint.yPercent, defaultPoint.yPercent),
+        x: clampPixel(configuredPoint.x, defaultPoint.x),
+        y: clampPixel(configuredPoint.y, defaultPoint.y),
       };
     });
   } catch (error) {
@@ -1743,9 +1737,9 @@ async function clickSupervisorTile(page, supervisorIndex) {
     throw new Error(`Nao encontrei as coordenadas mapeadas para o supervisor ${supervisorIndex}.`);
   }
 
-  const box = await getPowerBiFrameBox(page);
-  const clickX = box.x + (box.width * point.xPercent) / 100;
-  const clickY = box.y + (box.height * point.yPercent) / 100;
+  await getPowerBiFrameBox(page);
+  const clickX = point.x;
+  const clickY = point.y;
 
   await page.mouse.move(clickX, clickY).catch(() => {});
   await page.waitForTimeout(150);
@@ -1764,7 +1758,7 @@ async function applySupervisorFilter(page, options) {
 
   console.log(
     `Aplicando filtro SUPERVISOR: ${options.supervisorIndex} via clique mapeado ` +
-      `(${point.xPercent}%, ${point.yPercent}%)`,
+      `(${point.x}, ${point.y})`,
   );
 
   await waitForPowerBiInteractiveScreen(page, "antes da selecao do supervisor");
@@ -1849,8 +1843,8 @@ async function main() {
     await pauseBetweenActions(page, options, "entrada em tela cheia");
     await goToReportPage(page, options.page);
     await pauseBetweenActions(page, options, `navegacao para a pagina ${options.page}`);
-    await applySupervisorFilter(page, options);
     await applyOptionalFilters(page, options);
+    await applySupervisorFilter(page, options);
     await saveEvidence(page, options);
 
     console.log("Fluxo concluido. O relatorio 28 foi aberto.");

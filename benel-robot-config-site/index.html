@@ -149,7 +149,7 @@
             </div>
 
             <p class="helper-text">
-              O filtro de supervisor agora usa clique por coordenada real dentro do Power BI. Ajuste X e Y em percentual para mapear os 9 supervisores da esquerda para a direita.
+              O filtro de supervisor agora usa clique por coordenadas absolutas da tela. Informe X e Y em pixels, por exemplo: 1334 e 278.
             </p>
 
             <div id="supervisorMapList" class="supervisor-map-grid"></div>
@@ -333,12 +333,12 @@
 
         <div class="form-grid supervisor-point-grid">
           <label class="field">
-            <span>X (%)</span>
-            <input data-supervisor-map-field="xPercent" type="number" min="0" max="100" step="0.1" />
+            <span>X (px)</span>
+            <input data-supervisor-map-field="x" type="number" min="0" step="1" />
           </label>
           <label class="field">
-            <span>Y (%)</span>
-            <input data-supervisor-map-field="yPercent" type="number" min="0" max="100" step="0.1" />
+            <span>Y (px)</span>
+            <input data-supervisor-map-field="y" type="number" min="0" step="1" />
           </label>
         </div>
       </article>
