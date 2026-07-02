@@ -12,6 +12,8 @@ const PROFILE_DIR = process.env.BENEL_PROFILE_DIR || path.join(__dirname, "outpu
 const SCREENSHOT_DIR = process.env.BENEL_SCREENSHOT_DIR || path.join(__dirname, "outputs", "benel-ppbi-screenshots");
 const TARGET_REPORT_PAGE = 28;
 const HEADLESS = /^true$/i.test(process.env.BENEL_HEADLESS || "false");
+const SUPERVISOR_COUNT = 9;
+const SUPERVISOR_IMAGE_SELECTOR = "svg image, img";
 
 function parseArgs(argv) {
   const options = {
@@ -1379,126 +1381,202 @@ async function applyOptionalFilters(page, options) {
   }
 }
 
-async function listSupervisorTiles(page) {
-  const powerBiFrame = getPowerBiFrame(page);
-  if (!powerBiFrame) {
-    throw new Error("Frame do Power BI nao encontrado para localizar os supervisores.");
-  }
-
-  return powerBiFrame.evaluate(() => {
-    const isVisible = (element) => {
-      const rect = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      return (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        style.visibility !== "hidden" &&
-        style.display !== "none" &&
-        style.opacity !== "0" &&
-        !element.hasAttribute("hidden")
-      );
-    };
-
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-    const rawCandidates = Array.from(document.querySelectorAll("img, image, [role='img']")).flatMap((element) => {
-      const clickable =
-        element.closest("[role='button'], button, a, [tabindex], .slicerItemContainer, [aria-label], [title]") ||
-        element;
-
-      if (!isVisible(element) && !isVisible(clickable)) {
-        return [];
-      }
-
-      const elementRect = element.getBoundingClientRect();
-      const clickableRect = clickable.getBoundingClientRect();
-      const rect =
-        clickableRect.width > 0 && clickableRect.height > 0 && clickableRect.width < 160 && clickableRect.height < 160
-          ? clickableRect
-          : elementRect;
-
-      if (
-        rect.width < 12 ||
-        rect.height < 12 ||
-        rect.width > 120 ||
-        rect.height > 120 ||
-        rect.top < 40 ||
-        rect.top > 220 ||
-        rect.left < viewportWidth * 0.55
-      ) {
-        return [];
-      }
-
-      const labelParts = [
-        element.getAttribute("alt"),
-        element.getAttribute("aria-label"),
-        element.getAttribute("title"),
-        clickable.getAttribute("aria-label"),
-        clickable.getAttribute("title"),
-      ]
-        .filter(Boolean)
-        .map((value) => value.replace(/\s+/g, " ").trim());
-
-      return [
-        {
-          left: rect.left,
-          top: rect.top,
-          width: rect.width,
-          height: rect.height,
-          centerX: rect.left + rect.width / 2,
-          centerY: rect.top + rect.height / 2,
-          label: labelParts.join(" | "),
-        },
-      ];
-    });
-
-    if (!rawCandidates.length) {
-      return [];
-    }
-
-    const groupedByRow = new Map();
-    for (const candidate of rawCandidates) {
-      const bucket = Math.round(candidate.centerY / 12) * 12;
-      const existing = groupedByRow.get(bucket) || [];
-      existing.push(candidate);
-      groupedByRow.set(bucket, existing);
-    }
-
-    const [, bestRowCandidates] =
-      Array.from(groupedByRow.entries()).sort((left, right) => right[1].length - left[1].length)[0] || [];
-
-    if (!bestRowCandidates || !bestRowCandidates.length) {
-      return [];
-    }
-
-    const deduped = [];
-    for (const candidate of bestRowCandidates.sort((left, right) => left.left - right.left)) {
-      const alreadyIncluded = deduped.some(
-        (existing) =>
-          Math.abs(existing.centerX - candidate.centerX) < 8 && Math.abs(existing.centerY - candidate.centerY) < 8,
-      );
-
-      if (!alreadyIncluded) {
-        deduped.push(candidate);
-      }
-    }
-
-    return deduped.map((candidate, index) => ({
-      ...candidate,
-      position: index + 1,
-    }));
+function buildSupervisorResetFilters() {
+  return buildFilterDefinitions({
+    filial: "Todos",
+    zona: "Todos",
+    situacao: "Todos",
+    centroCusto: "Todos",
+    tipoCategoria: "Todos",
+    frota: "Todos",
+    placa: "Todos",
   });
 }
 
-async function waitForSupervisorTilesReady(page, supervisorIndex) {
+async function resetPersistedFiltersBeforeSupervisor(page) {
+  const surface = getPowerBiFrame(page) ?? page;
+  await waitForReport28FiltersReady(page);
+
+  console.log("A galeria de supervisores parece filtrada. Limpando filtros principais para mapear os 9 supervisores...");
+
+  for (const filter of buildSupervisorResetFilters()) {
+    try {
+      await setFilterValue(page, surface, filter);
+      await page.waitForTimeout(700);
+      await waitForPowerBiInteractiveScreen(page, `apos limpar ${filter.label}`);
+    } catch (error) {
+      console.warn(`AVISO: nao consegui limpar o filtro ${filter.label}: ${error.message || error}`);
+      await closeOpenReportPopups(page).catch(() => {});
+    }
+  }
+}
+
+async function listSupervisorTiles(page) {
+  const viewport = await page
+    .evaluate(() => ({
+      width: window.innerWidth || document.documentElement.clientWidth || 0,
+      height: window.innerHeight || document.documentElement.clientHeight || 0,
+    }))
+    .catch(() => ({ width: 0, height: 0 }));
+
+  const candidates = [];
+
+  for (const [frameIndex, frame] of page.frames().entries()) {
+    let images = [];
+    try {
+      images = await frame.evaluate((selector) => {
+        const isVisible = (element) => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.visibility !== "hidden" &&
+            style.display !== "none" &&
+            style.opacity !== "0" &&
+            !element.hasAttribute("hidden")
+          );
+        };
+
+        return Array.from(document.querySelectorAll(selector)).map((element, elementIndex) => {
+          const rect = element.getBoundingClientRect();
+          const href =
+            element.getAttribute("href") ||
+            element.getAttribute("xlink:href") ||
+            element.href?.baseVal ||
+            "";
+
+          return {
+            elementIndex,
+            href,
+            label:
+              element.getAttribute("alt") ||
+              element.getAttribute("aria-label") ||
+              element.getAttribute("title") ||
+              "",
+            localLeft: rect.left,
+            localTop: rect.top,
+            localWidth: rect.width,
+            localHeight: rect.height,
+            tagName: element.tagName.toLowerCase(),
+            visible: isVisible(element),
+          };
+        });
+      }, SUPERVISOR_IMAGE_SELECTOR);
+    } catch {
+      continue;
+    }
+
+    if (!images.length) {
+      continue;
+    }
+
+    const imageLocator = frame.locator(SUPERVISOR_IMAGE_SELECTOR);
+
+    for (const image of images) {
+      if (!image.visible) {
+        continue;
+      }
+
+      const box = await imageLocator.nth(image.elementIndex).boundingBox().catch(() => null);
+      if (!box) {
+        continue;
+      }
+
+      const centerX = box.x + box.width / 2;
+      const centerY = box.y + box.height / 2;
+      const roughlySquare = Math.abs(box.width - box.height) <= Math.max(14, Math.min(box.width, box.height) * 0.45);
+      const looksLikeSupervisorPhoto =
+        image.tagName === "image" ||
+        /ibb\.co|png|jpg|jpeg|webp/i.test(image.href || "") ||
+        /supervisor|foto|imagem/i.test(image.label || "");
+
+      if (
+        box.width < 16 ||
+        box.height < 16 ||
+        box.width > 90 ||
+        box.height > 90 ||
+        !roughlySquare ||
+        !looksLikeSupervisorPhoto
+      ) {
+        continue;
+      }
+
+      if (viewport.width && centerX < viewport.width * 0.55) {
+        continue;
+      }
+
+      if (centerY < 40 || centerY > 240) {
+        continue;
+      }
+
+      candidates.push({
+        frame,
+        frameIndex,
+        elementIndex: image.elementIndex,
+        href: image.href,
+        label: image.label,
+        left: box.x,
+        top: box.y,
+        width: box.width,
+        height: box.height,
+        centerX,
+        centerY,
+      });
+    }
+  }
+
+  if (!candidates.length) {
+    return [];
+  }
+
+  const groupedByRow = new Map();
+  for (const candidate of candidates) {
+    const bucket = Math.round(candidate.centerY / 12) * 12;
+    const existing = groupedByRow.get(bucket) || [];
+    existing.push(candidate);
+    groupedByRow.set(bucket, existing);
+  }
+
+  const [, bestRowCandidates] =
+    Array.from(groupedByRow.entries()).sort((left, right) => right[1].length - left[1].length)[0] || [];
+
+  if (!bestRowCandidates || !bestRowCandidates.length) {
+    return [];
+  }
+
+  const deduped = [];
+  for (const candidate of bestRowCandidates.sort((left, right) => left.left - right.left)) {
+    const alreadyIncluded = deduped.some(
+      (existing) => Math.abs(existing.centerX - candidate.centerX) < 8 && Math.abs(existing.centerY - candidate.centerY) < 8,
+    );
+
+    if (!alreadyIncluded) {
+      deduped.push(candidate);
+    }
+  }
+
+  return deduped.map((candidate, index) => ({
+    ...candidate,
+    position: index + 1,
+  }));
+}
+
+async function waitForSupervisorTilesReady(page, supervisorIndex, options = {}) {
+  const minimumTiles = options.requireFullGallery ? Math.max(supervisorIndex, SUPERVISOR_COUNT) : supervisorIndex;
   let lastTiles = [];
+  await waitForPowerBiInteractiveScreen(page, "antes da selecao do supervisor");
 
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    await waitForPowerBiInteractiveScreen(page, "antes da selecao do supervisor");
     lastTiles = await listSupervisorTiles(page);
 
-    if (lastTiles.length >= supervisorIndex) {
+    if (lastTiles.length >= minimumTiles) {
       console.log(`OK: Blocos de supervisor detectados (${lastTiles.length} visiveis)`);
       return lastTiles;
+    }
+
+    if (attempt === 0 || (attempt + 1) % 10 === 0) {
+      console.log(`Aguardando blocos de supervisor aparecerem... tentativa ${attempt + 1}/60`);
     }
 
     await page.waitForTimeout(500);
@@ -1511,8 +1589,28 @@ async function waitForSupervisorTilesReady(page, supervisorIndex) {
 
   throw new Error(
     `Nao encontrei o supervisor ${supervisorIndex}. ` +
-      `Blocos visiveis detectados: ${lastTiles.length}. ${preview ? `Mapa atual: ${preview}.` : ""}`,
+      `Blocos visiveis detectados: ${lastTiles.length}. ${preview ? `Mapa atual: ${preview}.` : "Nenhum candidato visivel foi encontrado."}`,
   );
+}
+
+async function clickSupervisorTile(page, tile) {
+  const locator = tile.frame.locator(SUPERVISOR_IMAGE_SELECTOR).nth(tile.elementIndex);
+
+  try {
+    await locator.click({ force: true, timeout: 15000 });
+    return;
+  } catch (error) {
+    console.warn(`Clique direto no SVG do supervisor falhou; tentando clique por coordenada. Detalhe: ${error.message || error}`);
+  }
+
+  const box = await locator.boundingBox();
+  if (!box) {
+    throw new Error("Nao consegui medir o bloco do supervisor para clicar.");
+  }
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+  await page.waitForTimeout(150);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 }
 
 async function applySupervisorFilter(page, options) {
@@ -1520,29 +1618,23 @@ async function applySupervisorFilter(page, options) {
     return;
   }
 
-  const tiles = await waitForSupervisorTilesReady(page, options.supervisorIndex);
+  let tiles = await waitForSupervisorTilesReady(page, 1);
+  if (tiles.length < SUPERVISOR_COUNT) {
+    await resetPersistedFiltersBeforeSupervisor(page);
+  }
+
+  tiles = await waitForSupervisorTilesReady(page, options.supervisorIndex, { requireFullGallery: true });
   const targetTile = tiles[options.supervisorIndex - 1];
   if (!targetTile) {
     throw new Error(`O supervisor ${options.supervisorIndex} nao esta disponivel para clique.`);
   }
-
-  const frameElement = page.locator('iframe[src*="app.powerbi.com"]').first();
-  const frameBox = await frameElement.boundingBox();
-  if (!frameBox) {
-    throw new Error("Nao consegui medir a area do frame do Power BI para clicar no supervisor.");
-  }
-
-  const clickX = frameBox.x + targetTile.centerX;
-  const clickY = frameBox.y + targetTile.centerY;
 
   console.log(
     `Aplicando filtro SUPERVISOR: ${options.supervisorIndex} (da esquerda para a direita)` +
       `${targetTile.label ? ` - ${targetTile.label}` : ""}`,
   );
 
-  await page.mouse.move(clickX, clickY).catch(() => {});
-  await page.waitForTimeout(150);
-  await page.mouse.click(clickX, clickY);
+  await clickSupervisorTile(page, targetTile);
   await page.waitForTimeout(1500);
   await waitForPowerBiInteractiveScreen(page, `apos supervisor ${options.supervisorIndex}`);
   await pauseBetweenActions(page, options, `supervisor ${options.supervisorIndex}`);
@@ -1622,8 +1714,8 @@ async function main() {
     await pauseBetweenActions(page, options, "entrada em tela cheia");
     await goToReportPage(page, options.page);
     await pauseBetweenActions(page, options, `navegacao para a pagina ${options.page}`);
-    await applyOptionalFilters(page, options);
     await applySupervisorFilter(page, options);
+    await applyOptionalFilters(page, options);
     await saveEvidence(page, options);
 
     console.log("Fluxo concluido. O relatorio 28 foi aberto.");
