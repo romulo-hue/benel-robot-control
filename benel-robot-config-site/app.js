@@ -498,6 +498,7 @@ function updateCycle(index, field, rawValue) {
   }
 
   refreshMetrics();
+  saveState();
 }
 
 function moveCycle(index, direction) {
@@ -533,12 +534,15 @@ function renderCycles() {
         input.value = value ?? "";
       }
 
-      input.addEventListener("input", (event) => {
+      const handleCycleFieldChange = (event) => {
         updateCycle(index, field, event.target.value);
         if (field === "name") {
           node.querySelector(".cycle-title").textContent = event.target.value || `Ciclo ${index + 1}`;
         }
-      });
+      };
+
+      input.addEventListener("input", handleCycleFieldChange);
+      input.addEventListener("change", handleCycleFieldChange);
     });
 
     node.querySelector(".remove").addEventListener("click", () => {
